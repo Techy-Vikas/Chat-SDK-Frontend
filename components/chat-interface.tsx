@@ -3,12 +3,14 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Loader2 } from "lucide-react"
+import { Send, Loader2, Mic, MicOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent } from "@/components/ui/card"
+import { useAudioRecorder } from "@/hooks/use-audio-recorder"
+import { uploadAudioForTranscription } from "@/lib/audio-upload"
 
 type Message = {
   id: string
@@ -21,9 +23,19 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isTranscribing, setIsTranscribing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
   const [user, setUser] = useState<any>(null)
+
+  // Audio recorder hook
+  const {
+    recordingState,
+    startRecording,
+    stopRecording,
+    error: recordingError,
+    isRecordingSupported
+  } = useAudioRecorder()
 
   useEffect(() => {
     const userData = localStorage.getItem("user")
@@ -36,8 +48,65 @@ export default function ChatInterface() {
     scrollToBottom()
   }, [messages])
 
+  // Handle recording errors
+  useEffect(() => {
+    if (recordingError) {
+      toast({
+        title: "Recording Error",
+        description: recordingError,
+        variant: "destructive",
+      })
+    }
+  }, [recordingError, toast])
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  // Handle audio recording
+  const handleToggleRecording = async () => {
+    if (recordingState === "recording") {
+      // Stop recording
+      setIsTranscribing(true)
+      try {
+        const audioBlob = await stopRecording()
+        if (audioBlob) {
+          // Upload the audio for transcription
+          const transcribedText = await uploadAudioForTranscription(audioBlob)
+          setInput(transcribedText)
+
+          toast({
+            title: "Audio transcribed",
+            description: "You can now edit the text before sending.",
+          })
+        }
+      } catch (error) {
+        console.error("Error processing audio:", error)
+        toast({
+          title: "Transcription failed",
+          description: error instanceof Error ? error.message : "Failed to transcribe audio",
+          variant: "destructive",
+        })
+      } finally {
+        setIsTranscribing(false)
+      }
+    } else {
+      // Start recording
+      try {
+        await startRecording()
+        toast({
+          title: "Recording started",
+          description: "Speak now. Click the microphone button again to stop recording.",
+        })
+      } catch (error) {
+        console.error("Error starting recording:", error)
+        toast({
+          title: "Recording failed",
+          description: "Could not start recording. Please check microphone permissions.",
+          variant: "destructive",
+        })
+      }
+    }
   }
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -176,10 +245,28 @@ export default function ChatInterface() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type your message..."
-            disabled={isLoading}
+            disabled={isLoading || recordingState === "recording"}
             className="flex-1"
           />
-          <Button type="submit" disabled={isLoading || !input.trim()}>
+          {isRecordingSupported && (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={isLoading || isTranscribing}
+              onClick={handleToggleRecording}
+              className={recordingState === "recording" ? "bg-red-500 text-white hover:bg-red-600" : ""}
+            >
+              {recordingState === "recording" ? (
+                <MicOff className="h-4 w-4" />
+              ) : isTranscribing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+          <Button type="submit" disabled={isLoading || !input.trim() || recordingState === "recording"}>
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </form>
